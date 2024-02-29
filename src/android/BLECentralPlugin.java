@@ -90,6 +90,7 @@ public class BLECentralPlugin extends CordovaPlugin {
     private static final String READ = "read";
     private static final String WRITE = "write";
     private static final String WRITE_WITHOUT_RESPONSE = "writeWithoutResponse";
+    private static final String WRITE_Q = "writeQ";
 
     private static final String READ_RSSI = "readRSSI";
 
@@ -313,6 +314,24 @@ public class BLECentralPlugin extends CordovaPlugin {
             byte[] data = args.getArrayBuffer(3);
             int type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
             write(callbackContext, macAddress, serviceUUID, characteristicUUID, data, type);
+
+        } else if (action.equals(WRITE_Q)) {
+            //TRUYENN-WRITEQ-BEGIN
+            String macAddress = args.getString(0);
+            UUID serviceUUID = uuidFromString(args.getString(1));
+            UUID characteristicUUID = uuidFromString(args.getString(2));
+            byte[] data = args.getArrayBuffer(3);
+            int chunkSize = args.getInt(4);
+            int chunkDelay = args.getInt(5);
+            if (chunkSize <= 0) {
+                chunkSize = 20;
+            }
+            if (chunkDelay < 0) {
+                chunkDelay = 0;
+            }
+            int type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
+            writeQ(callbackContext, macAddress, serviceUUID, characteristicUUID, data, type, chunkSize, chunkDelay);
+            //TRUYENN-WRITEQ-END
 
         } else if (action.equals(START_NOTIFICATION)) {
 
@@ -1058,6 +1077,44 @@ public class BLECentralPlugin extends CordovaPlugin {
         peripheral.queueWrite(callbackContext, serviceUUID, characteristicUUID, data, writeType);
 
     }
+
+    //TRUYENN-WRITEQ-BEGIN
+    // Splits data into chunks and puts each on the peripheral's command queue,
+    // which serialises them behind onCharacteristicWrite. chunkDelay (ms) is
+    // applied before enqueuing each chunk, as in the 1.7.2 fork.
+    private void writeQ(CallbackContext callbackContext, String macAddress, UUID serviceUUID, UUID characteristicUUID,
+                       byte[] data, int writeType, int chunkSize, int chunkDelay) {
+        Peripheral peripheral = peripherals.get(macAddress);
+        if (peripheral == null) {
+            callbackContext.error("Peripheral " + macAddress + " not found.");
+            return;
+        }
+
+        if (!peripheral.isConnected()) {
+            callbackContext.error("Peripheral " + macAddress + " is not connected.");
+            return;
+        }
+
+        try {
+            int offset = 0;
+            do {
+                int thisChunkSize = Math.min(chunkSize, data.length - offset);
+                byte[] chunk = Arrays.copyOfRange(data, offset, offset + thisChunkSize);
+                offset += thisChunkSize;
+                if (chunkDelay > 0) {
+                    Thread.sleep(chunkDelay);
+                }
+                peripheral.queueWrite(callbackContext, serviceUUID, characteristicUUID, chunk, writeType);
+            } while (offset < data.length);
+            callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, "true"));
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            callbackContext.error("Exception " + ex);
+        } catch (Exception ex) {
+            callbackContext.error("Exception " + ex);
+        }
+    }
+    //TRUYENN-WRITEQ-END
 
     @SuppressLint("MissingPermission")
     private void connectL2cap(CallbackContext callbackContext, String macAddress, int psm, boolean secureChannel) {
