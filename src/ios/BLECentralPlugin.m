@@ -99,7 +99,7 @@
             for (id uuid in restoredScanServices) {
                 [uuids addObject:[uuid UUIDString]];
             }
-            
+
             state[@"scanServiceUUIDs"] = uuids;
         }
 
@@ -171,10 +171,10 @@
     if (!peripheral) {
         peripheral = [self retrievePeripheralWithUUID:uuid];
     }
-    
+
     if (peripheral) {
         NSLog(@"Autoconnecting to peripheral with UUID : %@", uuid);
-        
+
         [connectCallbacks setObject:[command.callbackId copy] forKey:[peripheral uuidAsString]];
         [manager connectPeripheral:peripheral options:nil];
     } else {
@@ -184,7 +184,7 @@
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
     }
-    
+
 }
 
 // disconnect: function (device_id, success, failure) {
@@ -303,6 +303,56 @@
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
     }
 }
+
+//TRUYENN-WRITEQ-BEGIN
+- (void)writeQ:(CDVInvokedUrlCommand*)command {
+    NSLog(@"writeQ");
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyWrite];
+    NSData *data = [command argumentAtIndex:3]; // This is binary
+    int chunkSize = 20;
+    int chunkDelay = 0;
+    NSNumber *chunkSizeN = [command argumentAtIndex:4];
+    NSNumber *chunkDelayN = [command argumentAtIndex:5];
+    if(chunkSizeN != nil && chunkSizeN >= 0) {
+        chunkSize = [chunkSizeN intValue];
+    }
+    if(chunkDelayN != nil && chunkDelayN >= 0) {
+        chunkDelay = [chunkDelayN intValue];
+    }
+    if (context) {
+        if (data != nil) {
+            CBPeripheral *peripheral = [context peripheral];
+            if ([peripheral state] != CBPeripheralStateConnected) {
+                CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Peripheral is not connected"];
+                [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+                return;
+            }
+            CBCharacteristic *characteristic = [context characteristic];
+
+            NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
+            [writeCallbacks setObject:[command.callbackId copy] forKey:key];
+
+            for(int index = 0; index < data.length; index = index + chunkSize) {
+                if(chunkDelay > 0) {
+                    usleep(chunkDelay);
+                }
+                long len = chunkSize;
+                if(index > data.length - chunkSize || index + len > data.length) {
+                    len = data.length - index;
+                }
+                NSData *writingData = [data subdataWithRange:NSMakeRange(index, len)];
+                [peripheral writeValue:writingData forCharacteristic:characteristic type:CBCharacteristicWriteWithResponse];
+            }
+            CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+        } else {
+            CDVPluginResult *pluginResult = nil;
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"message was null"];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+        }
+    }
+}
+//TRUYENN-WRITEQ-END
 
 // success callback is called on notification
 // notify: function (device_id, service_uuid, characteristic_uuid, success, failure) {
@@ -556,12 +606,12 @@
     NSArray<CBPeripheral *> *foundPeripherals = [manager retrievePeripheralsWithIdentifiers:identifiers];
     // TODO are any of these connected?
     NSMutableArray<NSDictionary *> *found = [NSMutableArray new];
-    
+
     for (CBPeripheral *peripheral in foundPeripherals) {
         [peripherals addObject:peripheral];   // TODO do we save these?
         [found addObject:[peripheral asDictionary]];
     }
-    
+
     CDVPluginResult *pluginResult = nil;
     pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:found];
     NSLog(@"Peripherals with identifiers %@ %@", identifierUUIDStrings, found);
@@ -588,7 +638,7 @@
         }
         NSLog(@"Cleared callbacks for L2CAP channel key %@", key);
     }
-    
+
     CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
     [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
 }
@@ -866,14 +916,14 @@
     if(readCallbackId) {
         NSData *data = characteristic.value; // send RAW data to Javascript
         CDVPluginResult *pluginResult = nil;
-        
+
         if (error) {
             NSLog(@"%@", error);
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[error localizedDescription]];
         } else {
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArrayBuffer:data];
         }
-        
+
         [self.commandDelegate sendPluginResult:pluginResult callbackId:readCallbackId];
 
         [readCallbacks removeObjectForKey:key];
@@ -886,7 +936,7 @@
     NSString *stopNotificationCallbackId = [stopNotificationCallbacks objectForKey:key];
 
     CDVPluginResult *pluginResult = nil;
-    
+
     if (stopNotificationCallbackId) {
         if (!characteristic.isNotifying) {
             // successfully stopped notifications
@@ -913,7 +963,7 @@
             // successfully started notifications
             // notification start succeeded, move the callback to the value notifications dict
             [notificationCallbacks setObject:startNotificationCallbackId forKey:key];
-            
+
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"registered"];
             [pluginResult setKeepCallbackAsBool:TRUE]; // keep for notification
         } else {
@@ -1339,7 +1389,7 @@
 - (void) internalStopScan {
     [scanTimer invalidate];
     scanTimer = nil;
-    
+
     if ([manager state] == CBManagerStatePoweredOn) {
         [manager stopScan];
     }
