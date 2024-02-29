@@ -89,6 +89,7 @@ public class BLECentralPlugin extends CordovaPlugin {
     private static final String READ = "read";
     private static final String WRITE = "write";
     private static final String WRITE_WITHOUT_RESPONSE = "writeWithoutResponse";
+    private static final String WRITE_Q = "writeQ";
 
     private static final String READ_RSSI = "readRSSI";
 
@@ -146,6 +147,11 @@ public class BLECentralPlugin extends CordovaPlugin {
     private ScanSettings scanSettings;
     private final Handler stopScanHandler = new Handler(Looper.getMainLooper());
     private final Runnable stopScanRunnable = this::stopScan;
+
+    //TRUYENN-WRITEQ-BEGIN
+    //Quick Writes
+    private LinkedList<byte[]> queueQuick = new LinkedList<byte[]>();
+    //TRUYENN-WRITEQ-END
 
     // Bluetooth state notification
     CallbackContext stateCallback;
@@ -310,6 +316,24 @@ public class BLECentralPlugin extends CordovaPlugin {
             byte[] data = args.getArrayBuffer(3);
             int type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
             write(callbackContext, macAddress, serviceUUID, characteristicUUID, data, type);
+
+        } else if (action.equals(WRITE_Q)) {
+            //TRUYENN-WRITEQ-BEGIN
+            String macAddress = args.getString(0);
+            UUID serviceUUID = uuidFromString(args.getString(1));
+            UUID characteristicUUID = uuidFromString(args.getString(2));
+            byte[] data = args.getArrayBuffer(3);
+            int chunkSize = args.getInt(4);
+            int chunkDelay = args.getInt(5);
+            if (chunkSize <= 0) {
+                chunkSize = 20;
+            }
+            if (chunkDelay < 0) {
+                chunkDelay = 0;
+            }
+            int type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
+            writeQ(callbackContext, macAddress, serviceUUID, characteristicUUID, data, type, chunkSize, chunkDelay);
+            //TRUYENN-WRITEQ-END
 
         } else if (action.equals(START_NOTIFICATION)) {
 
@@ -1031,6 +1055,61 @@ public class BLECentralPlugin extends CordovaPlugin {
 
     }
 
+    //TRUYENN-WRITEQ-BEGIN
+    private void writeQ(CallbackContext callbackContext, String macAddress, UUID serviceUUID, UUID characteristicUUID,
+                       byte[] data, int writeType, int chunkSize, int chunkDelay) {
+        Peripheral peripheral = peripherals.get(macAddress);
+        if (peripheral == null) {
+            queueQuick.clear();
+            callbackContext.error("Peripheral " + macAddress + " not found.");
+            return;
+        }
+
+        if (!peripheral.isConnected()) {
+            queueQuick.clear();
+            callbackContext.error("Peripheral " + macAddress + " is not connected.");
+            return;
+        }
+
+        queueQuick.clear();
+        int length = data.length;
+        int offset = 0;
+        do {
+            int thisChunkSize = length - offset > chunkSize ? chunkSize : length - offset;
+            byte[] chunk = Arrays.copyOfRange(data, offset, offset + thisChunkSize);
+            offset += thisChunkSize;
+            queueQuick.add(chunk);
+        } while (offset < length);
+        writeQuick(callbackContext, peripheral, serviceUUID, characteristicUUID, writeType, chunkDelay);
+    }
+
+    private void writeQuick(CallbackContext callbackContext, Peripheral peripheral, UUID serviceUUID, UUID characteristicUUID,
+                       int writeType, int chunkDelay) {
+        try {
+            byte[] data = queueQuick.poll();
+            //LOG.w(TAG, "writeQuick->chunkDelay " + chunkDelay);
+            if (chunkDelay > 0) {
+                Thread.sleep(chunkDelay);
+            }
+            //peripheral.quickWrite(callbackContext, serviceUUID, characteristicUUID, data, writeType);
+            peripheral.queueWrite(callbackContext, serviceUUID, characteristicUUID, data, writeType);
+            if (queueQuick.size() == 0) {
+                PluginResult result = new PluginResult(PluginResult.Status.OK, "true");
+                callbackContext.sendPluginResult(result);
+            } else {
+                writeQuick(callbackContext, peripheral, serviceUUID, characteristicUUID, writeType, chunkDelay);
+            }
+        } catch (InterruptedException ex) {
+            queueQuick.clear();
+            Thread.currentThread().interrupt(); // ignore/reset
+            callbackContext.error("Exception " + ex);
+        } catch (Exception ex) {
+            queueQuick.clear();
+            callbackContext.error("Exception " + ex);
+        }
+    }
+    //TRUYENN-WRITEQ-END
+
     private void connectL2cap(CallbackContext callbackContext, String macAddress, int psm, boolean secureChannel) {
         Peripheral peripheral = peripherals.get(macAddress);
         if (peripheral == null) {
@@ -1141,7 +1220,7 @@ public class BLECentralPlugin extends CordovaPlugin {
             if (!alreadyReported) {
                 Boolean isConnectable = null;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    isConnectable = result.isConnectable(); 
+                    isConnectable = result.isConnectable();
                 }
 
                 Peripheral peripheral = new Peripheral(device, result.getRssi(), result.getScanRecord().getBytes(), isConnectable);
