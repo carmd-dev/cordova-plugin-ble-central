@@ -52,6 +52,7 @@ import org.json.JSONObject;
 import org.json.JSONException;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static android.bluetooth.BluetoothDevice.DEVICE_TYPE_DUAL;
 import static android.bluetooth.BluetoothDevice.DEVICE_TYPE_LE;
@@ -125,7 +126,9 @@ public class BLECentralPlugin extends CordovaPlugin {
     BluetoothAdapter bluetoothAdapter;
 
     // key is the MAC Address
-    Map<String, Peripheral> peripherals = new LinkedHashMap<String, Peripheral>();
+    // Scan results (BLE binder thread) and startScan (plugin thread) both touch this map, so it
+    // must tolerate concurrent iteration/modification (was a LinkedHashMap -> ConcurrentModificationException)
+    Map<String, Peripheral> peripherals = new ConcurrentHashMap<String, Peripheral>();
 
     // scan options
     boolean reportDuplicates = false;
@@ -1223,7 +1226,8 @@ public class BLECentralPlugin extends CordovaPlugin {
             super.onScanResult(callbackType, result);
             BluetoothDevice device = result.getDevice();
             String address = device.getAddress();
-            boolean alreadyReported = peripherals.containsKey(address) && !peripherals.get(address).isUnscanned();
+            Peripheral knownPeripheral = peripherals.get(address);
+            boolean alreadyReported = knownPeripheral != null && !knownPeripheral.isUnscanned();
 
             if (!alreadyReported) {
                 Boolean isConnectable = null;
