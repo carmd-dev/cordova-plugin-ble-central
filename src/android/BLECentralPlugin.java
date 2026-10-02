@@ -1261,6 +1261,20 @@ public class BLECentralPlugin extends CordovaPlugin {
         @Override
         public void onScanFailed(int errorCode) {
             super.onScanFailed(errorCode);
+            LOG.w(TAG, "Scan failed, errorCode = " + errorCode);
+
+            // SCAN_FAILED_ALREADY_STARTED means the earlier scan is still running and delivering
+            // results, so it must not be reported as a failure.
+            if (errorCode == SCAN_FAILED_ALREADY_STARTED) {
+                return;
+            }
+
+            // Without this the JS side keeps waiting on a scan that never started.
+            CallbackContext callback = discoverCallback;
+            if (callback != null) {
+                discoverCallback = null;
+                callback.error("Scan failed, errorCode = " + errorCode);
+            }
         }
     };
 
